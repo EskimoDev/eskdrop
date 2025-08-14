@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Text Overlay</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: transparent;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden;
+            pointer-events: none;
+        }
+
+        .text-container {
+            position: absolute;
+            pointer-events: none;
+            transform: translate(-50%, -50%);
+            white-space: nowrap;
+        }
+
+        .text-3d {
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            text-align: center;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+            transition: opacity 0.3s ease;
+            will-change: transform, opacity;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+        }
+
+        .stash-name {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .key-prompt {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .keyboard-key {
+            display: inline-block;
+            background: linear-gradient(145deg, #f0f0f0, #d0d0d0);
+            border: 2px solid #bbb;
+            border-radius: 6px;
+            padding: 4px 8px;
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            text-shadow: none;
+            box-shadow: 
+                0 3px 0 #999,
+                0 4px 6px rgba(0, 0, 0, 0.3);
+            transform: translateY(0);
+            transition: all 0.1s ease;
+            animation: keyBounce 2s ease-in-out infinite;
+            min-width: 20px;
+            text-align: center;
+        }
+
+        @keyframes keyBounce {
+            0%, 100% {
+                transform: translateY(0);
+                box-shadow: 
+                    0 3px 0 #999,
+                    0 4px 6px rgba(0, 0, 0, 0.3);
+            }
+            50% {
+                transform: translateY(2px);
+                box-shadow: 
+                    0 1px 0 #999,
+                    0 2px 4px rgba(0, 0, 0, 0.3);
+            }
+        }
+
+        .keyboard-key:active,
+        .keyboard-key.pressed {
+            transform: translateY(2px);
+            box-shadow: 
+                0 1px 0 #999,
+                0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .timer-display {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            color: white;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+        }
+
+        .clock-icon {
+            position: relative;
+            display: inline-block;
+            background: linear-gradient(145deg, #f0f0f0, #d0d0d0);
+            border: 2px solid #bbb;
+            border-radius: 50%;
+            width: 18px;
+            height: 18px;
+            box-shadow: 
+                0 2px 0 #999,
+                0 3px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .clock-hour-hand {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 1px;
+            height: 5px;
+            background: #333;
+            transform-origin: bottom center;
+            transform: translate(-50%, -100%);
+            animation: hourHand 12s linear infinite;
+        }
+
+        .clock-minute-hand {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 1px;
+            height: 7px;
+            background: #333;
+            transform-origin: bottom center;
+            transform: translate(-50%, -100%);
+            animation: minuteHand 1s linear infinite;
+        }
+
+        .clock-center {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 2px;
+            height: 2px;
+            background: #333;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        @keyframes hourHand {
+            0% { transform: translate(-50%, -100%) rotate(0deg); }
+            100% { transform: translate(-50%, -100%) rotate(360deg); }
+        }
+
+        @keyframes minuteHand {
+            0% { transform: translate(-50%, -100%) rotate(0deg); }
+            100% { transform: translate(-50%, -100%) rotate(360deg); }
+        }
+
+        .timer-text {
+            font-family: 'Courier New', monospace;
+            font-weight: 600;
+        }
+
+        .timer-expired {
+            color: #ff4444 !important;
+            animation: flash 1s ease-in-out infinite;
+        }
+
+        .timer-expired .clock-hour-hand,
+        .timer-expired .clock-minute-hand {
+            animation-play-state: paused;
+        }
+
+        @keyframes flash {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .text-3d.fade-in {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+
+        .text-3d.fade-out {
+            animation: fadeOut 0.3s ease-in-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes fadeOut {
+            from { opacity: 1; }
+            to { opacity: 0; }
+        }
+    </style>
+</head>
+<body>
+    <script>
+        let activeTexts = new Map();
+
+        // Listen for messages from Lua
+        window.addEventListener('message', function(event) {
+            const data = event.data;
+
+            switch(data.action) {
+                case 'show':
+                    showText(data.id, data.text, data.x, data.y);
+                    break;
+                case 'hide':
+                    hideText(data.id);
+                    break;
+                case 'update':
+                    updateText(data.id, data.x, data.y);
+                    break;
+                case 'clear':
+                    clearAllTexts();
+                    break;
+                case 'keypress':
+                    triggerKeyPress(data.id);
+                    break;
+                case 'updateTimer':
+                    updateTimer(data.id, data.expiresAt);
+                    break;
+            }
+        });
+
+
+        function showText(id, text, x, y) {
+            // Remove existing text if any
+            hideText(id);
+
+            // Create new text element with optimized DOM manipulation
+            const container = document.createElement('div');
+            container.className = 'text-container';
+            container.style.cssText = `left: ${x}px; top: ${y}px;`;
+
+            const textElement = document.createElement('div');
+            textElement.className = 'text-3d fade-in';
+            
+            // Create the content with stash name, keyboard key prompt, and timer
+            textElement.innerHTML = `
+                <div class="stash-name">${text}</div>
+                <div class="key-prompt">
+                    <span class="keyboard-key" id="key-${id}">E</span>
+                    <span>to open</span>
+                </div>
+                <div class="timer-display" id="timer-${id}">
+                    <div class="clock-icon">
+                        <div class="clock-hour-hand"></div>
+                        <div class="clock-minute-hand"></div>
+                        <div class="clock-center"></div>
+                    </div>
+                    <span class="timer-text" id="timer-text-${id}">00:00:00</span>
+                </div>
+            `;
+
+            container.appendChild(textElement);
+            document.body.appendChild(container);
+
+            activeTexts.set(id, {
+                container: container,
+                textElement: textElement,
+                keyElement: textElement.querySelector(`#key-${id}`),
+                timerElement: textElement.querySelector(`#timer-${id}`),
+                timerTextElement: textElement.querySelector(`#timer-text-${id}`),
+                lastX: x,
+                lastY: y,
+                expiresAt: null,
+                expired: false
+            });
+        }
+
+        function hideText(id) {
+            const data = activeTexts.get(id);
+            if (data && data.container) {
+                data.textElement.className = 'text-3d fade-out';
+                
+                setTimeout(() => {
+                    if (data.container.parentNode) {
+                        data.container.parentNode.removeChild(data.container);
+                    }
+                    activeTexts.delete(id);
+                }, 300);
+            }
+        }
+
+        function updateText(id, x, y) {
+            const data = activeTexts.get(id);
+            if (data && data.container) {
+                // Only update if position actually changed (performance optimization)
+                if (data.lastX !== x || data.lastY !== y) {
+                    data.container.style.cssText = `left: ${x}px; top: ${y}px;`;
+                    data.lastX = x;
+                    data.lastY = y;
+                }
+            }
+        }
+
+        function clearAllTexts() {
+            activeTexts.forEach((data, id) => {
+                hideText(id);
+            });
+            // Force clear after animation
+            setTimeout(() => {
+                document.body.innerHTML = '';
+                activeTexts.clear();
+            }, 350);
+        }
+
+        // Handle key press visual feedback
+        function triggerKeyPress(id) {
+            const data = activeTexts.get(id);
+            if (data && data.keyElement) {
+                data.keyElement.classList.add('pressed');
+                setTimeout(() => {
+                    data.keyElement.classList.remove('pressed');
+                }, 150);
+            }
+        }
+
+        // Update timer display
+        function updateTimer(id, expiresAt) {
+            const data = activeTexts.get(id);
+            if (data && data.timerTextElement) {
+                data.expiresAt = expiresAt;
+            }
+        }
+
+        // Format seconds to HH:MM:SS
+        function formatTime(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        // Timer update loop
+        setInterval(() => {
+            const now = Math.floor(Date.now() / 1000);
+            
+            activeTexts.forEach((data, id) => {
+                if (data.expiresAt && data.timerTextElement) {
+                    const timeLeft = Math.max(0, data.expiresAt - now);
+                    
+                    if (timeLeft > 0) {
+                        data.timerTextElement.textContent = formatTime(timeLeft);
+                        data.timerElement.classList.remove('timer-expired');
+                        data.expired = false;
+                    } else if (!data.expired) {
+                        // Timer just expired - trigger immediate cleanup
+                        data.timerTextElement.textContent = 'EXPIRED';
+                        data.timerElement.classList.add('timer-expired');
+                        data.expired = true;
+                        
+                        // Send expiration event to Lua
+                        fetch(`https://${GetParentResourceName()}/stashExpired`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json; charset=UTF-8',
+                            },
+                            body: JSON.stringify({
+                                stashId: id
+                            })
+                        });
+                        
+                        console.log('Stash expired:', id);
+                    }
+                }
+            });
+        }, 1000);
+
+
+    </script>
+</body>
+</html>
