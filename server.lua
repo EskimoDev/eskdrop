@@ -128,9 +128,10 @@ if Config.Debug then
         local stashConfig = Config.StashTypes[stashType]
         
         if stashConfig then
+            -- Start the new interactive placement system
             TriggerClientEvent('eskdrop-spade:client:useStashItem', src, stashType, stashConfig)
             if Config.Debug then
-                print('^2[eskdrop-spade]^7 Testing ' .. stashType .. ' stash creation for player ' .. src)
+                print('^2[eskdrop-spade]^7 Starting interactive placement for ' .. stashType .. ' for player ' .. src)
             end
         else
             TriggerClientEvent('QBCore:Notify', src, 'Invalid stash type. Available: ' .. table.concat(getTableKeys(Config.StashTypes), ', '), 'error')

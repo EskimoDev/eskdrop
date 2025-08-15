@@ -10,7 +10,8 @@ shared_scripts {
 }
 
 client_scripts {
-    'client.lua'
+    'client.lua',
+    'placement.lua'
 }
 
 server_scripts {

@@ -4,59 +4,13 @@ local QBCore = exports['qb-core']:GetCoreObject()
 local activeStashProps = {}
 local renderingStashCount = 0 -- Track how many stashes are currently rendering
 
--- Handle stash item usage
+-- Handle stash item usage - now starts the placement system
 RegisterNetEvent('eskdrop-spade:client:useStashItem', function(stashType, stashConfig)
-    local playerPed = PlayerPedId()
-    local coords = GetEntityCoords(playerPed)
-    local heading = GetEntityHeading(playerPed)
-    
-    -- Disable player controls during animation
-    SetPlayerControl(PlayerId(), false, 0)
-    
-    -- Load animation dictionary
-    RequestAnimDict(stashConfig.animation.dict)
-    while not HasAnimDictLoaded(stashConfig.animation.dict) do
-        Wait(100)
-    end
-    
-    -- Play animation
-    TaskPlayAnim(playerPed, stashConfig.animation.dict, stashConfig.animation.name, 8.0, -8.0, stashConfig.animation.duration, 1, 0, false, false, false)
-    
-    -- Show notification
-    QBCore.Functions.Notify('Creating ' .. stashConfig.label .. '...', 'primary', stashConfig.animation.duration)
-    
-    -- Wait for animation to complete
-    Wait(stashConfig.animation.duration)
-    
-    -- Clear animation and restore controls
-    ClearPedTasks(playerPed)
-    SetPlayerControl(PlayerId(), true, 1)
-    
-    -- Calculate prop position (slightly in front of player) and include player heading
-    local propOffset = GetOffsetFromEntityInWorldCoords(playerPed, 0.0, 1.0, -0.5)
-    local propCoords = vector4(propOffset.x, propOffset.y, propOffset.z, heading)
-    
-    -- Create the stash prop using config-specific prop
-    local propModel = GetHashKey(stashConfig.prop)
-    RequestModel(propModel)
-    while not HasModelLoaded(propModel) do
-        Wait(100)
-    end
-    
-    local prop = CreateObject(propModel, propCoords.x, propCoords.y, propCoords.z, true, true, true)
-    PlaceObjectOnGroundProperly(prop)
-    SetEntityHeading(prop, propCoords.w)
-    SetEntityAsMissionEntity(prop, true, true)
-    FreezeEntityPosition(prop, true)
-    
-    -- Set model as no longer needed
-    SetModelAsNoLongerNeeded(propModel)
-    
-    -- Request player name from server (this will create the stash and store the prop handle)
-    TriggerServerEvent('eskdrop-spade:client:getPlayerName', propCoords, prop, stashType)
+    -- Start the interactive placement system
+    exports['eskdrop']:StartPlacementSystem(stashType, stashConfig)
     
     if Config.Debug then
-        print('^2[eskdrop-spade]^7 Created ' .. stashType .. ' prop and sent coordinates to server')
+        print('^2[eskdrop-spade]^7 Starting interactive placement for ' .. stashType)
     end
 end)
 
