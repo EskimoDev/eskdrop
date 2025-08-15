@@ -16,26 +16,42 @@ CreateThread(function()
             for _, stash in ipairs(results) do
                 local coords = vector3(stash.coords_x, stash.coords_y, stash.coords_z)
                 local expiresAt = tonumber(stash.expires_unix)
+                local stashType = stash.stash_type or 'spade' -- Default to spade for legacy stashes
+                local stashConfig = Config.StashTypes[stashType]
                 
-                -- Register stash with ox_inventory
-                exports.ox_inventory:RegisterStash(stash.stash_id, stash.owner_name .. "'s Stash", Config.Stash.slots, Config.Stash.weight, false)
-                
-                -- Store in active stashes
-                activeStashes[stash.stash_id] = {
-                    owner = stash.owner_citizenid,
-                    label = stash.owner_name .. "'s Stash",
-                    coords = coords,
-                    created = stash.created_at,
-                    expiresAt = expiresAt
-                }
-                
-                -- Create stash on all clients (props and client tracking)
-                TriggerClientEvent('eskdrop-spade:client:createStash', -1, stash.stash_id, stash.owner_name .. "'s Stash", coords, expiresAt)
-                TriggerClientEvent('eskdrop-spade:client:createProp', -1, stash.stash_id, coords)
-                
-                print('^2[eskdrop-spade]^7 Loaded stash: ' .. stash.owner_name .. "'s Stash (ID: " .. stash.stash_id .. ')')
+                if stashConfig then
+                    -- Reconstruct the full stash label with container type
+                    local fullStashLabel = stash.owner_name .. "'s " .. stashConfig.label
+                    
+                    -- Register stash with ox_inventory using proper config and full label
+                    exports.ox_inventory:RegisterStash(stash.stash_id, fullStashLabel, stashConfig.slots, stashConfig.weight, false)
+                    
+                    -- Store in active stashes
+                    activeStashes[stash.stash_id] = {
+                        owner = stash.owner_citizenid,
+                        label = fullStashLabel,
+                        coords = coords,
+                        created = stash.created_at,
+                        expiresAt = expiresAt,
+                        stashType = stashType
+                    }
+                    
+                    -- Create stash on all clients (props and client tracking) with full label
+                    TriggerClientEvent('eskdrop-spade:client:createStash', -1, stash.stash_id, fullStashLabel, coords, expiresAt)
+                    TriggerClientEvent('eskdrop-spade:client:createProp', -1, stash.stash_id, coords, stashType)
+                    
+                    if Config.Debug then
+                        print('^2[eskdrop-spade]^7 Loaded stash: ' .. fullStashLabel .. ' (ID: ' .. stash.stash_id .. ', Type: ' .. stashType .. ')')
+                    end
+                else
+                    if Config.Debug then
+                        print('^3[eskdrop-spade]^7 Warning: Unknown stash type "' .. stashType .. '" for stash ID: ' .. stash.stash_id)
+                    end
+                end
             end
-            print('^2[eskdrop-spade]^7 Loaded ' .. #results .. ' valid stashes from database and spawned props')
+            if Config.Debug then
+                print('^2[eskdrop-spade]^7 Loaded ' .. #results .. ' valid stashes from database and spawned props')
+            end
         end
     end)
 end)
@@ -43,7 +59,7 @@ end)
 -- Function to clean up expired stashes
 function CleanupExpiredStashes()
     MySQL.Async.execute('DELETE FROM eskdrop_stashes WHERE expires_at <= NOW()', {}, function(affectedRows)
-        if affectedRows > 0 then
+        if affectedRows > 0 and Config.Debug then
             print('^3[eskdrop-spade]^7 Cleaned up ' .. affectedRows .. ' expired stashes from database')
         end
     end)
@@ -64,11 +80,13 @@ function CleanupExpiredStashes()
             activeStashes[stashId] = nil
             removedCount = removedCount + 1
             
-            print('^3[eskdrop-spade]^7 Removed expired stash from memory: ' .. stashId)
+            if Config.Debug then
+                print('^3[eskdrop-spade]^7 Removed expired stash from memory: ' .. stashId)
+            end
         end
     end
     
-    if removedCount > 0 then
+    if removedCount > 0 and Config.Debug then
         print('^3[eskdrop-spade]^7 Cleaned up ' .. removedCount .. ' expired stashes from memory')
     end
 end
@@ -81,42 +99,68 @@ CreateThread(function()
     end
 end)
 
--- Create useable item for spade (ox_inventory bridge will handle this properly)
-QBCore.Functions.CreateUseableItem(Config.SpadeItem, function(source, item)
-    local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
-    
-    if not Player then return end
-    
-    print('^2[eskdrop-spade]^7 Spade used by player ' .. src)
-    
-    -- Remove the spade item from inventory
-    Player.Functions.RemoveItem(Config.SpadeItem, 1)
-    TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[Config.SpadeItem], "remove")
-    
-    -- Trigger client animation and prop placement
-    TriggerClientEvent('eskdrop-spade:client:useSpade', src)
-end)
+-- Create useable items for all configured stash types
+for itemName, stashConfig in pairs(Config.StashTypes) do
+    QBCore.Functions.CreateUseableItem(itemName, function(source, item)
+        local src = source
+        local Player = QBCore.Functions.GetPlayer(src)
+        
+        if not Player then return end
+        
+        if Config.Debug then
+            print('^2[eskdrop-spade]^7 ' .. itemName .. ' used by player ' .. src)
+        end
+        
+        -- Remove the item from inventory
+        Player.Functions.RemoveItem(itemName, 1)
+        TriggerClientEvent('inventory:client:ItemBox', src, QBCore.Shared.Items[itemName], "remove")
+        
+        -- Trigger client-side stash creation with stash type
+        TriggerClientEvent('eskdrop-spade:client:useStashItem', src, itemName, stashConfig)
+    end)
+end
 
--- Test command for debugging
-RegisterCommand('shovel', function(source, args, rawCommand)
-    local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
-    
-    if not Player then return end
-    
-    print('^1[eskdrop-spade]^7 Test command used by player ' .. src)
-    TriggerClientEvent('eskdrop-spade:client:useSpade', src)
-end, false)
+-- Testing commands for stash functionality (debug mode only)
+if Config.Debug then
+    RegisterCommand('shovel', function(source, args, rawCommand)
+        local src = source
+        local stashType = args[1] or 'spade'
+        local stashConfig = Config.StashTypes[stashType]
+        
+        if stashConfig then
+            TriggerClientEvent('eskdrop-spade:client:useStashItem', src, stashType, stashConfig)
+            if Config.Debug then
+                print('^2[eskdrop-spade]^7 Testing ' .. stashType .. ' stash creation for player ' .. src)
+            end
+        else
+            TriggerClientEvent('QBCore:Notify', src, 'Invalid stash type. Available: ' .. table.concat(getTableKeys(Config.StashTypes), ', '), 'error')
+        end
+    end, false)
+end
 
--- Handle getting player name from database
-RegisterNetEvent('eskdrop-spade:server:getPlayerName', function(coords, propHandle)
+-- Helper function to get table keys
+function getTableKeys(tbl)
+    local keys = {}
+    for key, _ in pairs(tbl) do
+        table.insert(keys, key)
+    end
+    return keys
+end
+
+-- Handle stash item usage and get player name
+RegisterNetEvent('eskdrop-spade:client:getPlayerName', function(coords, propHandle, stashType)
     local src = source
     local Player = QBCore.Functions.GetPlayer(src)
     
     if not Player then return end
     
     local citizenid = Player.PlayerData.citizenid
+    local stashConfig = Config.StashTypes[stashType]
+    
+    if not stashConfig then
+        TriggerClientEvent('QBCore:Notify', src, 'Invalid stash type', 'error')
+        return
+    end
     
     -- Query the database for player character info
     MySQL.Async.fetchScalar('SELECT charinfo FROM players WHERE citizenid = ?', {citizenid}, function(result)
@@ -126,13 +170,13 @@ RegisterNetEvent('eskdrop-spade:server:getPlayerName', function(coords, propHand
             local lastname = charinfo.lastname or 'Player'
             
             -- Create unique stash identifier
-            local stashId = 'spade_stash_' .. citizenid .. '_' .. os.time()
-            local stashLabel = firstname .. ' ' .. lastname .. "'s Stash"
+            local stashId = stashType .. '_stash_' .. citizenid .. '_' .. os.time()
+            local stashLabel = firstname .. ' ' .. lastname .. "'s " .. stashConfig.label
             local currentTime = os.time()
-            local expiresAt = currentTime + Config.Stash.expiration_time
+            local expiresAt = currentTime + stashConfig.expiration_time
             
-            -- Register the stash with ox_inventory
-            exports.ox_inventory:RegisterStash(stashId, stashLabel, Config.Stash.slots, Config.Stash.weight, false)
+            -- Register the stash with ox_inventory using stash-specific properties
+            exports.ox_inventory:RegisterStash(stashId, stashLabel, stashConfig.slots, stashConfig.weight, false)
             
             -- Store stash info in memory
             activeStashes[stashId] = {
@@ -140,30 +184,36 @@ RegisterNetEvent('eskdrop-spade:server:getPlayerName', function(coords, propHand
                 label = stashLabel,
                 coords = coords,
                 created = currentTime,
-                expiresAt = expiresAt
+                expiresAt = expiresAt,
+                stashType = stashType
             }
             
-            -- Save stash to database with expiration time
-            MySQL.Async.execute('INSERT INTO eskdrop_stashes (stash_id, owner_citizenid, owner_name, coords_x, coords_y, coords_z, expires_at) VALUES (?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?))', {
+            -- Save stash to database with expiration time and stash type
+            MySQL.Async.execute('INSERT INTO eskdrop_stashes (stash_id, owner_citizenid, owner_name, coords_x, coords_y, coords_z, expires_at, stash_type) VALUES (?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?), ?)', {
                 stashId,
                 citizenid,
                 firstname .. ' ' .. lastname,
                 coords.x,
                 coords.y,
                 coords.z,
-                expiresAt
+                expiresAt,
+                stashType
             }, function(affectedRows)
-                if affectedRows > 0 then
-                    print('^2[eskdrop-spade]^7 Saved stash to database: ' .. stashLabel .. ' (ID: ' .. stashId .. ') - Expires in ' .. Config.Stash.expiration_time .. ' seconds')
-                else
-                    print('^1[eskdrop-spade]^7 Failed to save stash to database: ' .. stashId)
+                if Config.Debug then
+                    if affectedRows > 0 then
+                        print('^2[eskdrop-spade]^7 Saved stash to database: ' .. stashLabel .. ' (ID: ' .. stashId .. ') - Expires in ' .. stashConfig.expiration_time .. ' seconds')
+                    else
+                        print('^1[eskdrop-spade]^7 Failed to save stash to database: ' .. stashId)
+                    end
                 end
             end)
             
             -- Send stash info to client with timer information and prop handle
             TriggerClientEvent('eskdrop-spade:client:createStash', src, stashId, stashLabel, coords, expiresAt, propHandle)
             
-            print('^2[eskdrop-spade]^7 Created stash for ' .. firstname .. ' ' .. lastname .. ' (ID: ' .. stashId .. ')')
+            if Config.Debug then
+                print('^2[eskdrop-spade]^7 Created ' .. stashConfig.label .. ' for ' .. firstname .. ' ' .. lastname .. ' (ID: ' .. stashId .. ')')
+            end
         else
             TriggerClientEvent('QBCore:Notify', src, 'Failed to retrieve character information', 'error')
         end
@@ -183,7 +233,9 @@ RegisterNetEvent('eskdrop-spade:server:openStash', function(stashId)
         local currentTime = os.time()
         if activeStashes[stashId].expiresAt and currentTime >= activeStashes[stashId].expiresAt then
             TriggerClientEvent('QBCore:Notify', src, 'This stash has expired and is no longer accessible', 'error')
-            print('^1[eskdrop-spade]^7 Player ' .. Player.PlayerData.name .. ' tried to access expired stash: ' .. stashId)
+            if Config.Debug then
+                print('^1[eskdrop-spade]^7 Player ' .. Player.PlayerData.name .. ' tried to access expired stash: ' .. stashId)
+            end
             
             -- Trigger immediate cleanup since it somehow wasn't cleaned up yet
             TriggerEvent('eskdrop-spade:server:expireStash', stashId)
@@ -196,60 +248,72 @@ RegisterNetEvent('eskdrop-spade:server:openStash', function(stashId)
         -- Open the stash inventory
         exports.ox_inventory:forceOpenInventory(src, 'stash', stashId)
         
-        print('^2[eskdrop-spade]^7 Player ' .. Player.PlayerData.name .. ' opened stash: ' .. stashId)
+        if Config.Debug then
+            print('^2[eskdrop-spade]^7 Player ' .. Player.PlayerData.name .. ' opened stash: ' .. stashId)
+        end
     else
         TriggerClientEvent('QBCore:Notify', src, 'You cannot access this stash', 'error')
-        print('^3[eskdrop-spade]^7 Player ' .. Player.PlayerData.name .. ' tried to access unauthorized stash: ' .. stashId)
+        if Config.Debug then
+            print('^3[eskdrop-spade]^7 Player ' .. Player.PlayerData.name .. ' tried to access unauthorized stash: ' .. stashId)
+        end
     end
 end)
 
--- Admin command to list all stashes (optional)
-RegisterCommand('liststashes', function(source, args, rawCommand)
-    local src = source
-    local Player = QBCore.Functions.GetPlayer(src)
-    
-    if not Player then return end
-    
-    -- Check if player is admin (you can modify this permission check)
-    if Player.PlayerData.job.name == 'admin' or src == 0 then
-        MySQL.Async.fetchAll('SELECT * FROM eskdrop_stashes ORDER BY created_at DESC', {}, function(results)
-            if results and #results > 0 then
-                print('^2[eskdrop-spade]^7 === STASH LIST ===')
-                for _, stash in ipairs(results) do
-                    print('^3ID:^7 ' .. stash.stash_id)
-                    print('^3Owner:^7 ' .. stash.owner_name .. ' (' .. stash.owner_citizenid .. ')')
-                    print('^3Location:^7 ' .. stash.coords_x .. ', ' .. stash.coords_y .. ', ' .. stash.coords_z)
-                    print('^3Created:^7 ' .. stash.created_at)
-                    print('---')
+-- Admin command to list all stashes (debug mode only)
+if Config.Debug then
+    RegisterCommand('liststashes', function(source, args, rawCommand)
+        local src = source
+        local Player = QBCore.Functions.GetPlayer(src)
+        
+        if not Player then return end
+        
+        -- Check if player is admin (you can modify this permission check)
+        if Player.PlayerData.job.name == 'admin' or src == 0 then
+            MySQL.Async.fetchAll('SELECT * FROM eskdrop_stashes ORDER BY created_at DESC', {}, function(results)
+                if results and #results > 0 then
+                    print('^2[eskdrop-spade]^7 === STASH LIST ===')
+                    for _, stash in ipairs(results) do
+                        local stashType = stash.stash_type or 'unknown'
+                        print('^3ID:^7 ' .. stash.stash_id)
+                        print('^3Type:^7 ' .. stashType)
+                        print('^3Owner:^7 ' .. stash.owner_name .. ' (' .. stash.owner_citizenid .. ')')
+                        print('^3Location:^7 ' .. stash.coords_x .. ', ' .. stash.coords_y .. ', ' .. stash.coords_z)
+                        print('^3Created:^7 ' .. stash.created_at)
+                        print('---')
+                    end
+                    print('^2[eskdrop-spade]^7 Total stashes: ' .. #results)
+                else
+                    print('^1[eskdrop-spade]^7 No stashes found in database')
                 end
-                print('^2[eskdrop-spade]^7 Total stashes: ' .. #results)
-            else
-                print('^1[eskdrop-spade]^7 No stashes found in database')
-            end
-        end)
-    else
-        TriggerClientEvent('QBCore:Notify', src, 'You do not have permission to use this command', 'error')
-    end
-end, false)
+            end)
+        else
+            TriggerClientEvent('QBCore:Notify', src, 'You do not have permission to use this command', 'error')
+        end
+    end, false)
+end
 
 -- Handle immediate stash expiration (triggered by client timer)
 RegisterNetEvent('eskdrop-spade:server:expireStash', function(stashId)
     local src = source
     
-    print('^1[eskdrop-spade]^7 Immediate stash expiration triggered for: ' .. stashId)
+    if Config.Debug then
+        print('^1[eskdrop-spade]^7 Immediate stash expiration triggered for: ' .. stashId)
+    end
     
     -- Check if stash exists
     if activeStashes[stashId] then
         -- Remove from database immediately
         MySQL.Async.execute('DELETE FROM eskdrop_stashes WHERE stash_id = ?', {stashId}, function(affectedRows)
-            if affectedRows > 0 then
+            if affectedRows > 0 and Config.Debug then
                 print('^3[eskdrop-spade]^7 Removed expired stash from database: ' .. stashId)
             end
         end)
         
         -- Clear ox_inventory stash
         exports.ox_inventory:ClearInventory(stashId)
-        print('^3[eskdrop-spade]^7 Cleared ox_inventory for expired stash: ' .. stashId)
+        if Config.Debug then
+            print('^3[eskdrop-spade]^7 Cleared ox_inventory for expired stash: ' .. stashId)
+        end
         
         -- Remove from server memory
         activeStashes[stashId] = nil
@@ -257,9 +321,13 @@ RegisterNetEvent('eskdrop-spade:server:expireStash', function(stashId)
         -- Remove from all clients (props, text, interaction)
         TriggerClientEvent('eskdrop-spade:client:removeStash', -1, stashId)
         
-        print('^1[eskdrop-spade]^7 Stash ' .. stashId .. ' has been completely removed due to expiration')
+        if Config.Debug then
+            print('^1[eskdrop-spade]^7 Stash ' .. stashId .. ' has been completely removed due to expiration')
+        end
     else
-        print('^3[eskdrop-spade]^7 Attempted to expire non-existent stash: ' .. stashId)
+        if Config.Debug then
+            print('^3[eskdrop-spade]^7 Attempted to expire non-existent stash: ' .. stashId)
+        end
     end
 end)
 

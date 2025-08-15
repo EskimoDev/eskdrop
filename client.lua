@@ -4,8 +4,8 @@ local QBCore = exports['qb-core']:GetCoreObject()
 local activeStashProps = {}
 local renderingStashCount = 0 -- Track how many stashes are currently rendering
 
--- Use spade item
-RegisterNetEvent('eskdrop-spade:client:useSpade', function()
+-- Handle stash item usage
+RegisterNetEvent('eskdrop-spade:client:useStashItem', function(stashType, stashConfig)
     local playerPed = PlayerPedId()
     local coords = GetEntityCoords(playerPed)
     local heading = GetEntityHeading(playerPed)
@@ -14,19 +14,19 @@ RegisterNetEvent('eskdrop-spade:client:useSpade', function()
     SetPlayerControl(PlayerId(), false, 0)
     
     -- Load animation dictionary
-    RequestAnimDict(Config.Animation.dict)
-    while not HasAnimDictLoaded(Config.Animation.dict) do
+    RequestAnimDict(stashConfig.animation.dict)
+    while not HasAnimDictLoaded(stashConfig.animation.dict) do
         Wait(100)
     end
     
-    -- Play digging animation
-    TaskPlayAnim(playerPed, Config.Animation.dict, Config.Animation.name, 8.0, -8.0, Config.Animation.duration, 1, 0, false, false, false)
+    -- Play animation
+    TaskPlayAnim(playerPed, stashConfig.animation.dict, stashConfig.animation.name, 8.0, -8.0, stashConfig.animation.duration, 1, 0, false, false, false)
     
     -- Show notification
-    QBCore.Functions.Notify('Digging a stash...', 'primary', Config.Animation.duration)
+    QBCore.Functions.Notify('Creating ' .. stashConfig.label .. '...', 'primary', stashConfig.animation.duration)
     
     -- Wait for animation to complete
-    Wait(Config.Animation.duration)
+    Wait(stashConfig.animation.duration)
     
     -- Clear animation and restore controls
     ClearPedTasks(playerPed)
@@ -35,24 +35,40 @@ RegisterNetEvent('eskdrop-spade:client:useSpade', function()
     -- Calculate prop position (slightly in front of player)
     local propCoords = GetOffsetFromEntityInWorldCoords(playerPed, 0.0, 1.0, -0.5)
     
-    -- Create the stash prop
-    local propModel = GetHashKey(Config.StashProp)
+    -- Create the stash prop using config-specific prop
+    local propModel = GetHashKey(stashConfig.prop)
     RequestModel(propModel)
     while not HasModelLoaded(propModel) do
         Wait(100)
     end
     
     local prop = CreateObject(propModel, propCoords.x, propCoords.y, propCoords.z, true, true, true)
-	PlaceObjectOnGroundProperly(prop)
-	SetEntityHeading(prop, heading)
+    PlaceObjectOnGroundProperly(prop)
+    SetEntityHeading(prop, heading)
     SetEntityAsMissionEntity(prop, true, true)
-	FreezeEntityPosition(prop, true)
+    FreezeEntityPosition(prop, true)
     
     -- Set model as no longer needed
     SetModelAsNoLongerNeeded(propModel)
     
     -- Request player name from server (this will create the stash and store the prop handle)
-    TriggerServerEvent('eskdrop-spade:server:getPlayerName', propCoords, prop)
+    TriggerServerEvent('eskdrop-spade:client:getPlayerName', propCoords, prop, stashType)
+    
+    if Config.Debug then
+        print('^2[eskdrop-spade]^7 Created ' .. stashType .. ' prop and sent coordinates to server')
+    end
+end)
+
+-- Legacy spade support (for backward compatibility)
+RegisterNetEvent('eskdrop-spade:client:useSpade', function()
+    local spadeConfig = Config.StashTypes['spade']
+    if spadeConfig then
+        TriggerEvent('eskdrop-spade:client:useStashItem', 'spade', spadeConfig)
+    else
+        if Config.Debug then
+            print('^1[eskdrop-spade]^7 Error: Spade config not found!')
+        end
+    end
 end)
 
 -- Create stash with 3D text and interaction
@@ -82,7 +98,7 @@ RegisterNetEvent('eskdrop-spade:client:createStash', function(stashId, stashLabe
                 activeStashProps[stashId].isNear = true
                 -- Start rendering thread only when player gets near and under limit
                 if not wasNear and not activeStashProps[stashId].renderActive then
-                    if not Config.Text3D.performance_mode or renderingStashCount < Config.Text3D.max_concurrent_texts then
+                    if renderingStashCount < Config.Text3D.max_concurrent_texts then
                         activeStashProps[stashId].renderActive = true
                         renderingStashCount = renderingStashCount + 1
                         StartTextRenderingThread(stashId, coords, stashLabel)
@@ -103,28 +119,41 @@ RegisterNetEvent('eskdrop-spade:client:createStash', function(stashId, stashLabe
     QBCore.Functions.Notify('Stash created: ' .. stashLabel, 'success')
 end)
 
--- Create prop for existing stashes (on resource start/restart)
-RegisterNetEvent('eskdrop-spade:client:createProp', function(stashId, coords)
-    local propModel = GetHashKey(Config.StashProp)
+-- Handle prop creation for loaded stashes
+RegisterNetEvent('eskdrop-spade:client:createProp', function(stashId, coords, stashType)
+    stashType = stashType or 'spade' -- Default to spade for legacy stashes
+    local stashConfig = Config.StashTypes[stashType]
+    
+    if not stashConfig then
+        if Config.Debug then
+            print('^1[eskdrop-spade]^7 Error: Unknown stash type "' .. stashType .. '" for prop creation')
+        end
+        return
+    end
+    
+    local propModel = GetHashKey(stashConfig.prop)
     RequestModel(propModel)
     while not HasModelLoaded(propModel) do
         Wait(100)
     end
     
+    -- Create prop at specified coordinates
     local prop = CreateObject(propModel, coords.x, coords.y, coords.z, true, true, true)
     PlaceObjectOnGroundProperly(prop)
     SetEntityAsMissionEntity(prop, true, true)
     FreezeEntityPosition(prop, true)
     
-    -- Set model as no longer needed
-    SetModelAsNoLongerNeeded(propModel)
-    
-    -- Store prop handle if stash exists in memory
+    -- Store prop handle for cleanup
     if activeStashProps[stashId] then
         activeStashProps[stashId].propHandle = prop
     end
     
-    print('^2[eskdrop-spade]^7 Created prop for existing stash: ' .. stashId)
+    -- Set model as no longer needed
+    SetModelAsNoLongerNeeded(propModel)
+    
+    if Config.Debug then
+        print('^2[eskdrop-spade]^7 Created ' .. stashType .. ' prop for existing stash: ' .. stashId)
+    end
 end)
 
 -- Create interaction for stash (now handled by E key detection)
@@ -138,7 +167,7 @@ RegisterNetEvent('eskdrop-spade:client:openStash', function(data)
     local stashId = data.stashId
     if activeStashProps[stashId] then
         TriggerServerEvent('eskdrop-spade:server:openStash', stashId)
-	end
+    end
 end)
 
 -- NUI-based text rendering (only method)
@@ -172,8 +201,6 @@ function StartNUITextRendering(stashId, coords, stashLabel)
         end
     end)
 end
-
-
 
 -- NUI Text Functions
 function ShowNUIText(id, stashLabel, coords)
@@ -233,8 +260,6 @@ function HideNUIText(id)
     })
 end
 
-
-
 -- E Key press detection and visual feedback
 CreateThread(function()
     while true do
@@ -244,41 +269,73 @@ CreateThread(function()
         if IsControlJustPressed(0, 38) then
             local playerCoords = GetEntityCoords(PlayerPedId())
             
-            -- Check if player is near any active stash
+            -- Find all stashes that are near and have visible text
+            local nearbyStashes = {}
             for stashId, stashData in pairs(activeStashProps) do
                 if stashData.isNear then
                     local distance = #(playerCoords - stashData.coords)
                     if distance < Config.Text3D.distance then
-                        -- Trigger visual key press effect in NUI
-                        SendNUIMessage({
-                            action = 'keypress',
-                            id = stashId
+                        table.insert(nearbyStashes, {
+                            stashId = stashId,
+                            stashData = stashData,
+                            distance = distance
                         })
-                        
-                        -- Check if stash exists and is expired before opening
-                        if activeStashProps[stashId] then
-                            local currentTime = GetCloudTimeAsInt() -- FiveM client-side Unix timestamp
-                            local expiresAt = activeStashProps[stashId].expiresAt
-                            
-                            -- Debug info
-                            print('^5[eskdrop-spade]^7 Debug - Current time: ' .. currentTime .. ', Expires at: ' .. tostring(expiresAt))
-                            
-                            if expiresAt and currentTime >= expiresAt then
-                                QBCore.Functions.Notify('This stash has expired and cannot be accessed', 'error')
-                                print('^1[eskdrop-spade]^7 Attempted to open expired stash: ' .. stashId)
-                            else
-                                -- Open the stash
-                                TriggerServerEvent('eskdrop-spade:server:openStash', stashId)
-                                print('^2[eskdrop-spade]^7 Opening stash: ' .. stashId)
-                            end
-                        else
-                            print('^1[eskdrop-spade]^7 Error: activeStashProps[' .. stashId .. '] does not exist!')
-                            -- Try to open anyway (fallback)
-                            TriggerServerEvent('eskdrop-spade:server:openStash', stashId)
-                        end
-                        break
                     end
                 end
+            end
+            
+            -- If we found nearby stashes, open the closest one
+            if #nearbyStashes > 0 then
+                -- Sort by distance to find the closest stash
+                table.sort(nearbyStashes, function(a, b)
+                    return a.distance < b.distance
+                end)
+                
+                local closestStash = nearbyStashes[1]
+                local stashId = closestStash.stashId
+                local stashData = closestStash.stashData
+                
+                if Config.Debug then
+                    print('^6[eskdrop-spade]^7 Found ' .. #nearbyStashes .. ' nearby stashes, opening closest: ' .. stashId .. ' (distance: ' .. string.format("%.2f", closestStash.distance) .. 'm)')
+                end
+                
+                -- Trigger visual key press effect in NUI for the closest stash
+                SendNUIMessage({
+                    action = 'keypress',
+                    id = stashId
+                })
+                
+                -- Check if stash exists and is expired before opening
+                if activeStashProps[stashId] then
+                    local currentTime = GetCloudTimeAsInt() -- FiveM client-side Unix timestamp
+                    local expiresAt = activeStashProps[stashId].expiresAt
+                    
+                    -- Debug info
+                    if Config.Debug then
+                        print('^5[eskdrop-spade]^7 Debug - Current time: ' .. currentTime .. ', Expires at: ' .. tostring(expiresAt))
+                    end
+                    
+                    if expiresAt and currentTime >= expiresAt then
+                        QBCore.Functions.Notify('This stash has expired and cannot be accessed', 'error')
+                        if Config.Debug then
+                            print('^1[eskdrop-spade]^7 Attempted to open expired stash: ' .. stashId)
+                        end
+                    else
+                        -- Open the closest stash
+                        TriggerServerEvent('eskdrop-spade:server:openStash', stashId)
+                        if Config.Debug then
+                            print('^2[eskdrop-spade]^7 Opening closest stash: ' .. stashId .. ' at distance ' .. string.format("%.2f", closestStash.distance) .. 'm')
+                        end
+                    end
+                else
+                    if Config.Debug then
+                        print('^1[eskdrop-spade]^7 Error: activeStashProps[' .. stashId .. '] does not exist!')
+                    end
+                    -- Try to open anyway (fallback)
+                    TriggerServerEvent('eskdrop-spade:server:openStash', stashId)
+                end
+            elseif Config.Debug then
+                print('^3[eskdrop-spade]^7 No nearby stashes found within interaction range')
             end
         end
     end
@@ -328,14 +385,18 @@ RegisterNetEvent('eskdrop-spade:client:removeStash', function(stashId)
         -- Remove from active stashes
         activeStashProps[stashId] = nil
         
-        print('^3[eskdrop-spade]^7 Removed expired stash: ' .. stashId)
+        if Config.Debug then
+            print('^3[eskdrop-spade]^7 Removed expired stash: ' .. stashId)
+        end
     end
 end)
 
 -- Handle NUI callback for stash expiration
 RegisterNUICallback('stashExpired', function(data, cb)
     local stashId = data.stashId
-    print('^1[eskdrop-spade]^7 Stash expired (client-side): ' .. stashId)
+    if Config.Debug then
+        print('^1[eskdrop-spade]^7 Stash expired (client-side): ' .. stashId)
+    end
     
     -- Immediately trigger server-side expiration cleanup
     TriggerServerEvent('eskdrop-spade:server:expireStash', stashId)
