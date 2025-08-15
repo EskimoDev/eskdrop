@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS `eskdrop_stashes` (
   `coords_x` float NOT NULL,
   `coords_y` float NOT NULL,
   `coords_z` float NOT NULL,
+  `heading` float NOT NULL DEFAULT 0.0,
   `stash_type` varchar(50) NOT NULL DEFAULT 'spade',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `expires_at` timestamp NOT NULL,
@@ -28,5 +29,5 @@ CREATE TABLE IF NOT EXISTS `eskdrop_stashes` (
 -- INDEX on stash_type - for filtering by stash type
 
 -- Example data (optional - remove if not needed):
--- INSERT INTO `eskdrop_stashes` (`stash_id`, `owner_citizenid`, `owner_name`, `coords_x`, `coords_y`, `coords_z`, `stash_type`, `expires_at`) 
--- VALUES ('example_stash_123', 'ABC12345', 'John Doe\'s Buried Stash', 123.45, 67.89, 10.11, 'spade', DATE_ADD(NOW(), INTERVAL 1 HOUR));1
+-- INSERT INTO `eskdrop_stashes` (`stash_id`, `owner_citizenid`, `owner_name`, `coords_x`, `coords_y`, `coords_z`, `heading`, `stash_type`, `expires_at`) 
+-- VALUES ('example_stash_123', 'ABC12345', 'John Doe\'s Buried Stash', 123.45, 67.89, 10.11, 0.0, 'spade', DATE_ADD(NOW(), INTERVAL 1 HOUR));

@@ -32,8 +32,9 @@ RegisterNetEvent('eskdrop-spade:client:useStashItem', function(stashType, stashC
     ClearPedTasks(playerPed)
     SetPlayerControl(PlayerId(), true, 1)
     
-    -- Calculate prop position (slightly in front of player)
-    local propCoords = GetOffsetFromEntityInWorldCoords(playerPed, 0.0, 1.0, -0.5)
+    -- Calculate prop position (slightly in front of player) and include player heading
+    local propOffset = GetOffsetFromEntityInWorldCoords(playerPed, 0.0, 1.0, -0.5)
+    local propCoords = vector4(propOffset.x, propOffset.y, propOffset.z, heading)
     
     -- Create the stash prop using config-specific prop
     local propModel = GetHashKey(stashConfig.prop)
@@ -44,7 +45,7 @@ RegisterNetEvent('eskdrop-spade:client:useStashItem', function(stashType, stashC
     
     local prop = CreateObject(propModel, propCoords.x, propCoords.y, propCoords.z, true, true, true)
     PlaceObjectOnGroundProperly(prop)
-    SetEntityHeading(prop, heading)
+    SetEntityHeading(prop, propCoords.w)
     SetEntityAsMissionEntity(prop, true, true)
     FreezeEntityPosition(prop, true)
     
@@ -91,7 +92,7 @@ RegisterNetEvent('eskdrop-spade:client:createStash', function(stashId, stashLabe
     CreateThread(function()
         while activeStashProps[stashId] and activeStashProps[stashId].active do
             local playerCoords = GetEntityCoords(PlayerPedId())
-            local distance = #(playerCoords - coords)
+            local distance = #(playerCoords - vector3(coords.x, coords.y, coords.z))
             local wasNear = activeStashProps[stashId].isNear
             
             if distance < Config.Text3D.distance then
@@ -137,9 +138,10 @@ RegisterNetEvent('eskdrop-spade:client:createProp', function(stashId, coords, st
         Wait(100)
     end
     
-    -- Create prop at specified coordinates
+    -- Create prop at specified coordinates with heading
     local prop = CreateObject(propModel, coords.x, coords.y, coords.z, true, true, true)
     PlaceObjectOnGroundProperly(prop)
+    SetEntityHeading(prop, coords.w or 0.0)
     SetEntityAsMissionEntity(prop, true, true)
     FreezeEntityPosition(prop, true)
     
@@ -273,7 +275,7 @@ CreateThread(function()
             local nearbyStashes = {}
             for stashId, stashData in pairs(activeStashProps) do
                 if stashData.isNear then
-                    local distance = #(playerCoords - stashData.coords)
+                    local distance = #(playerCoords - vector3(stashData.coords.x, stashData.coords.y, stashData.coords.z))
                     if distance < Config.Text3D.distance then
                         table.insert(nearbyStashes, {
                             stashId = stashId,

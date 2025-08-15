@@ -14,7 +14,7 @@ CreateThread(function()
     MySQL.Async.fetchAll('SELECT *, UNIX_TIMESTAMP(expires_at) as expires_unix FROM eskdrop_stashes WHERE expires_at > NOW()', {}, function(results)
         if results then
             for _, stash in ipairs(results) do
-                local coords = vector3(stash.coords_x, stash.coords_y, stash.coords_z)
+                local coords = vector4(stash.coords_x, stash.coords_y, stash.coords_z, stash.heading or 0.0)
                 local expiresAt = tonumber(stash.expires_unix)
                 local stashType = stash.stash_type or 'spade' -- Default to spade for legacy stashes
                 local stashConfig = Config.StashTypes[stashType]
@@ -189,13 +189,14 @@ RegisterNetEvent('eskdrop-spade:client:getPlayerName', function(coords, propHand
             }
             
             -- Save stash to database with expiration time and stash type
-            MySQL.Async.execute('INSERT INTO eskdrop_stashes (stash_id, owner_citizenid, owner_name, coords_x, coords_y, coords_z, expires_at, stash_type) VALUES (?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?), ?)', {
+            MySQL.Async.execute('INSERT INTO eskdrop_stashes (stash_id, owner_citizenid, owner_name, coords_x, coords_y, coords_z, heading, expires_at, stash_type) VALUES (?, ?, ?, ?, ?, ?, ?, FROM_UNIXTIME(?), ?)', {
                 stashId,
                 citizenid,
                 firstname .. ' ' .. lastname,
                 coords.x,
                 coords.y,
                 coords.z,
+                coords.w or 0.0,
                 expiresAt,
                 stashType
             }, function(affectedRows)
@@ -277,7 +278,7 @@ if Config.Debug then
                         print('^3ID:^7 ' .. stash.stash_id)
                         print('^3Type:^7 ' .. stashType)
                         print('^3Owner:^7 ' .. stash.owner_name .. ' (' .. stash.owner_citizenid .. ')')
-                        print('^3Location:^7 ' .. stash.coords_x .. ', ' .. stash.coords_y .. ', ' .. stash.coords_z)
+                        print('^3Location:^7 ' .. stash.coords_x .. ', ' .. stash.coords_y .. ', ' .. stash.coords_z .. ' (heading: ' .. (stash.heading or 0.0) .. ')')
                         print('^3Created:^7 ' .. stash.created_at)
                         print('---')
                     end
