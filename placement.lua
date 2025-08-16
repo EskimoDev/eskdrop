@@ -15,6 +15,9 @@ local PlacementData = {
 -- Store placed but not built stashes
 local placedStashes = {}
 
+-- Debounce mechanism to prevent multiple E key triggers
+local eKeyDebounce = {}
+
 -- Start the placement system
 function StartPlacementSystem(stashType, stashConfig)
     if PlacementData.active then
@@ -246,7 +249,7 @@ function CancelPlacement()
     end
 end
 
--- Build interaction thread for placed stashes
+-- Build interaction thread for placed stashes (split into logic thread + E key thread)
 function BuildInteractionThread(placementId)
     local placementData = placedStashes[placementId]
     if not placementData then return end
@@ -255,8 +258,14 @@ function BuildInteractionThread(placementId)
     local stashType = placementData.stashType
     local stashConfig = placementData.stashConfig
     
+    -- Start dedicated E key detection thread (runs every frame like client.lua)
+    CreateThread(function()
+        BuildEKeyDetectionThread(placementId)
+    end)
+    
+    -- Main logic thread (faster updates to match client.lua system)
     while placedStashes[placementId] do
-        Wait(100) -- Check more frequently for better responsiveness
+        Wait(Config.Text3D.proximity_check_interval or 50) -- Match client.lua proximity check frequency
         
         local playerCoords = GetEntityCoords(PlayerPedId())
         local distance = #(playerCoords - vector3(coords.x, coords.y, coords.z))
@@ -287,26 +296,60 @@ function BuildInteractionThread(placementId)
                 print('^2[eskdrop-spade]^7 Stopping build prompt rendering for ' .. placementId)
             end
         end
+    end
+end
+
+-- Dedicated E key detection thread (runs every frame like client.lua for reliable key detection)
+function BuildEKeyDetectionThread(placementId)
+    if Config.Debug then
+        print('^6[eskdrop-spade]^7 Started dedicated E key detection thread for ' .. placementId)
+    end
+    
+    while placedStashes[placementId] do
+        Wait(0) -- Every frame for instant key response (like client.lua)
         
-        -- Check for E key press only when near and prompt is showing
-        if isNear and placementData.isShowingPrompt then
-            -- Add debug info every 5 seconds to show E key detection is active
-            if Config.Debug and GetGameTimer() % 5000 < 100 then
-                print('^5[eskdrop-spade]^7 E key detection active for ' .. placementId .. ' (distance: ' .. string.format("%.2f", distance) .. ')')
-            end
-            
-            if IsControlJustPressed(0, 38) then -- E key
+        local placementData = placedStashes[placementId]
+        if not placementData then break end
+        
+        local coords = placementData.coords
+        local playerCoords = GetEntityCoords(PlayerPedId())
+        local distance = #(playerCoords - vector3(coords.x, coords.y, coords.z))
+        local isNear = distance < Config.Text3D.distance
+        
+        -- Check for E key press when in range and prompt is showing (every frame!)
+        if isNear and placementData.isShowingPrompt and IsControlJustPressed(0, 38) then -- E key
+            -- Debounce check to prevent multiple triggers
+            if eKeyDebounce[placementId] then
                 if Config.Debug then
-                    print('^2[eskdrop-spade]^7 E key pressed! Starting build animation for ' .. placementId)
+                    print('^3[eskdrop-spade]^7 E key debounced for ' .. placementId .. ' (cooldown active)')
+                end
+            else
+                -- Set debounce cooldown (1 second)
+                eKeyDebounce[placementId] = true
+                SetTimeout(1000, function()
+                    eKeyDebounce[placementId] = nil
+                end)
+                
+                if Config.Debug then
+                    print('^2[eskdrop-spade]^7 E key detected instantly! Starting build animation for ' .. placementId .. ' (distance: ' .. string.format("%.2f", distance) .. ')')
                 end
                 
-                -- Hide prompt immediately to prevent multiple builds
+                -- Hide prompt immediately to prevent multiple builds and hide UI
                 HideBuildPrompt(placementId)
                 placementData.isShowingPrompt = false
+                placementData.wasNear = false
+                
+                -- Hide all UI elements when build starts (like client.lua system)
+                SendNUIMessage({action = 'clear'})
+                
                 StartBuildAnimation(placementId)
                 break
             end
         end
+    end
+    
+    if Config.Debug then
+        print('^6[eskdrop-spade]^7 Stopped E key detection thread for ' .. placementId)
     end
 end
 
@@ -498,6 +541,9 @@ function StartBuildAnimation(placementId)
         placedStashes[placementId] = nil
     end
     
+    -- Clean up debounce
+    eKeyDebounce[placementId] = nil
+    
     if Config.Debug then
         print('^2[eskdrop-spade]^7 Built ' .. stashType .. ' stash at placement location')
     end
@@ -558,5 +604,8 @@ AddEventHandler('onResourceStop', function(resourceName)
         
         -- Clear all NUI elements related to placement
         SendNUIMessage({action = 'clear'})
+        
+        -- Clear all debounce entries
+        eKeyDebounce = {}
     end
 end)
